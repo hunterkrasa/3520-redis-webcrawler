@@ -3,10 +3,26 @@ import mechanicalsoup
 import configparser 
 from elasticsearch import Elasticsearch, helpers
 from neo4j import GraphDatabase
+import sqlite3
 
 # driver = GraphDatabase.driver('neo4j://localhost:7687', auth=('neo4j', '01010101'))
 URI = 'neo4j://localhost:7687'
 AUTH = ('neo4j', '01010101')
+
+
+conn = sqlite3.connect('developers.db')
+cursor = conn.cursor()
+
+# Create a table if it doesn't exist
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS table_data (
+        id INTEGER PRIMARY KEY,
+        technology TEXT,
+        developer TEXT
+    )
+''')
+conn.commit()
+
 
 def start_node(page):
     with GraphDatabase.driver(URI, auth=AUTH) as driver:
@@ -31,34 +47,47 @@ def add_node(page, link):
         )
         print(f"Query counters: {summary.counters}.")
 
-start_node("test1")
-add_node("test1", "test2")
+# start_node("test1")
+# add_node("test1", "test2")
 
 config = configparser.ConfigParser()
 config.read('elastic.ini')
 print(config.read('elastic.ini'))
 
-es = Elasticsearch(
-    cloud_id= config['ELASTIC']['cloud_id'],
-    http_auth=(config['ELASTIC']['user'], config['ELASTIC']['password'])
-)
+# es = Elasticsearch(
+#     cloud_id= config['ELASTIC']['cloud_id'],
+#     http_auth=(config['ELASTIC']['user'], config['ELASTIC']['password'])
+# )
 
-def write_to_elastic(es, url, html):
-    link = url.decode('utf-8')
-    es.index(
-        index= 'webpages', 
-        document={
-            'url': link,
-            'html': html
-        }
-    )
+# def write_to_elastic(es, url, html):
+#     link = url.decode('utf-8')
+#     es.index(
+#         index= 'webpages', 
+#         document={
+#             'url': link,
+#             'html': html
+#         }
+#     )
 
-def crawl(browser, r, es, url):
+def crawl(browser, r, url):
     print(url)
     browser.open(url)
 
+    try:
+        title_tag = browser.page.select_one('h1.firstHeading').text
+        developer_head = browser.page.find('th', text='Developer')
+        developer_body = developer_head.find_next_sibling('td').get_text()
+        print(developer_body)
+        cursor.execute('''
+                INSERT INTO table_data (technology, developer)
+                VALUES (?, ?)
+            ''', (title_tag, developer_body))
+        conn.commit()
+    except:
+        print("Page missing some info needed")
+
     #cache to elastic 
-    write_to_elastic(es, url, str(browser.page))
+    # write_to_elastic(es, url, str(browser.page))
 
     #get links
     links = browser.page.find_all("a")
@@ -68,19 +97,19 @@ def crawl(browser, r, es, url):
     domain = "https://en.wikipedia.org"
     links = [domain + a for a in hrefs if a and a.startswith("/wiki/")]
     print("url start" + str(url))
-    for i in links:
+    # for i in links:
 
-        add_node(str(url), str(i))
+        # add_node(str(url), str(i))
 
     print("pushing links to redis")
     r.lpush("links", *links)
 
-start_url = "https://en.wikipedia.org/wiki/Redis"
+start_url = "https://en.wikipedia.org/wiki/Swift_(programming_language)"
 # start_node(start_url)
 r = redis.Redis()
 browser = mechanicalsoup.StatefulBrowser()
 
 r.lpush("links", start_url)
 while link := r.rpop("links"):
-    start_node(str(link))
-    crawl(browser, r, es, link)
+    # start_node(str(link))
+    crawl(browser, r, link)
